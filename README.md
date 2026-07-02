@@ -5,6 +5,16 @@ transformer, trained via behavior cloning on recorded rollouts, with the
 aim of generalizing pick-and-place beyond the exact configurations seen
 during RL training.
 
+## Start here
+
+`notebooks/01_project_walkthrough.ipynb` — an educational, tab-by-tab
+walkthrough of everything below: the raw data, the ego-frame transform,
+entity tokens, the tokenizer, the model, and a full training loop at the
+end (already executed, with plots, so you can read it without rerunning).
+Does **not** cover inference/rollout evaluation — that's a separate
+notebook. The rest of this README is the written reference for the same
+material.
+
 ## The robot
 
 A mobile manipulator: a planar (SE(2): x, y, yaw) base carrying a
@@ -12,7 +22,7 @@ continuum/soft arm. The arm is visually made of many small links, but only
 4 bend angles are independently actuated (`joint1..4`), each applied
 uniformly across the links in that segment. The gripper has 2 DOF: a
 linear open/close joint and a wrist-roll ("rotating") joint. See
-`robotic_transformer/data/schema.py` for the full column-level breakdown
+`src/schema.py` for the full column-level breakdown
 and the reasoning behind it.
 
 ## Data
