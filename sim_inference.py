@@ -9,7 +9,17 @@ from src import schema, ActionChunkTransformer, ModelConfig
 from src.transforms import yaw_from_quat_wz, world_to_ego, world_vel_to_ego, rotate_to_ego, sin_cos_encode
 
 
-def load_model(checkpoint_path: str, device: str = "cpu"):
+def get_device() -> str:
+    if torch.cuda.is_available():
+        return "cuda"
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def load_model(checkpoint_path: str, device: str = None):
+    device = device or get_device()
+    print(f"using device: {device}")
     device = torch.device(device)
     ckpt = torch.load(checkpoint_path, map_location=device)
     cfg = ModelConfig(**ckpt["config"])
@@ -19,13 +29,13 @@ def load_model(checkpoint_path: str, device: str = "cpu"):
     return model, cfg
 
 
-def predict_action(row: list, model, cfg, device: str = "cpu") -> dict:
+def predict_action(row: list, model, cfg) -> dict:
     """
     row: flat list of 48 raw values, in schema.ALL_COLUMNS order (one row
     of the training csvs). Returns the predicted next action as a dict.
     """
     r = dict(zip(schema.ALL_COLUMNS, row))
-    device = torch.device(device)
+    device = next(model.parameters()).device  # match wherever the model actually is
 
     # ego-frame transform (same math used at training time) -- the model
     # never sees raw world coordinates, only "relative to me right now"
