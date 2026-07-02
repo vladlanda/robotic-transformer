@@ -126,18 +126,33 @@ def device_smoke_test(model, cfg, device: torch.device):
         target = torch.randn(b, cfg.chunk_size, cfg.action_dim, device=device)
         mask = torch.ones(b, cfg.chunk_size, device=device)
 
+        # training-mode pass (forward + backward)
+        model.train()
         pred = model(proprio, obj, goal, obstacles, obstacle_mask)
         loss = masked_mse_loss(pred, target, mask)
         loss.backward()
         model.zero_grad(set_to_none=True)
-    except RuntimeError as e:
+
+        # EVAL-mode pass, no_grad, WITH a real padding mask -- this is the
+        # exact combination (eval() + src_key_padding_mask) that triggered
+        # a real bug in practice: nn.TransformerEncoder's internal nested-
+        # tensor fastpath only activates under these conditions and wasn't
+        # implemented on MPS, so a training-only smoke test missed it
+        # entirely. The validation pass in run_epoch() hits exactly this.
+        model.eval()
+        with torch.no_grad():
+            model(proprio, obj, goal, obstacles, obstacle_mask)
+        model.train()
+    except RuntimeError as e:  # NotImplementedError is a RuntimeError subclass, caught here too
         raise RuntimeError(
             f"Device smoke test failed on {device} before any real training happened. "
-            f"This is almost always a tensor created somewhere without an explicit "
-            f"device= argument, left on CPU while the model itself is on {device}. "
+            f"If this is a missing/unimplemented op (common on MPS), the fix is usually "
+            f"either avoiding that op or setting PYTORCH_ENABLE_MPS_FALLBACK=1 as a slower "
+            f"fallback. If it's a device-mismatch error, it's almost always a tensor "
+            f"created somewhere without an explicit device= argument. "
             f"Original error: {e}"
         ) from e
-    print(f"  device smoke test passed on {device}.")
+    print(f"  device smoke test passed on {device} (train and eval mode).")
 
 
 def split_episode_files(data_dir: str, val_fraction: float, seed: int):

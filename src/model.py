@@ -53,7 +53,15 @@ class ActionChunkTransformer(nn.Module):
             dropout=cfg.dropout,
             batch_first=True,
         )
-        self.encoder = nn.TransformerEncoder(layer, num_layers=cfg.num_layers)
+        # enable_nested_tensor=False: nn.TransformerEncoder has an internal
+        # "fastpath" that converts padded batches to nested tensors for
+        # speed. It only kicks in during eval() with a padding mask given
+        # (i.e. exactly our validation pass, not training) and is not
+        # implemented on MPS as of this writing -- raises
+        # NotImplementedError('_nested_tensor_from_mask_left_aligned' ...).
+        # Disabling it forces the standard dense/masked attention path,
+        # which is correct (just a bit less optimized) on every backend.
+        self.encoder = nn.TransformerEncoder(layer, num_layers=cfg.num_layers, enable_nested_tensor=False)
 
         self.action_head = nn.Sequential(
             nn.Linear(cfg.d_model, cfg.dim_feedforward),
