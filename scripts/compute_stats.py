@@ -19,7 +19,7 @@ import json
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from robotic_transformer.data import load_episode  # noqa: E402
+from src import load_episode  # noqa: E402
 
 
 FIELDS = [
