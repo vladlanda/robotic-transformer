@@ -48,21 +48,32 @@ def _stack_with_history(fn, ep: Episode, steps: list[int]) -> np.ndarray:
 class EpisodeChunkDataset(Dataset):
     def __init__(
         self,
-        data_dir: str,
+        data_dir: str = None,
         chunk_size: int = 12,
         history: int = 0,
         max_obstacles: int = 8,
         action_mode: ActionMode = "next_state",
         file_glob: str = "*.csv",
+        files: list[str] = None,
     ):
+        """
+        Provide EITHER data_dir (globs file_glob inside it) OR an explicit
+        `files` list (e.g. for a train/val split by episode -- see
+        scripts/train.py). If both are given, `files` takes precedence.
+        """
         self.chunk_size = chunk_size
         self.history = history
         self.max_obstacles = max_obstacles
         self.action_mode = action_mode
 
-        files = sorted(glob.glob(os.path.join(data_dir, file_glob)))
+        if files is not None:
+            files = sorted(files)
+        elif data_dir is not None:
+            files = sorted(glob.glob(os.path.join(data_dir, file_glob)))
+        else:
+            raise ValueError("EpisodeChunkDataset requires either data_dir or files")
         if not files:
-            raise FileNotFoundError(f"no episode files found in {data_dir} matching {file_glob}")
+            raise FileNotFoundError(f"no episode files found (data_dir={data_dir!r}, files={files!r})")
 
         self.episodes: list[Episode] = [load_episode(f, action_mode=action_mode) for f in files]
         entities.validate_feature_dims(self.episodes[0])  # fail fast if *_features() drifts from FEATURE_DIM
@@ -242,6 +253,31 @@ def test_raises_on_empty_directory():
             raise AssertionError("expected FileNotFoundError for an empty data directory, none was raised")
         except FileNotFoundError:
             pass  # expected
+
+
+def test_files_param_works_as_alternative_to_data_dir():
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = _make_synthetic_dataset_dir(tmp, n_episodes=3)
+        all_files = sorted(
+            os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith(".csv")
+        )
+        # split into two explicit file lists, like a train/val split by episode
+        train_files, val_files = all_files[:2], all_files[2:]
+        train_ds = EpisodeChunkDataset(files=train_files, chunk_size=12)
+        val_ds = EpisodeChunkDataset(files=val_files, chunk_size=12)
+        assert len(train_ds.episodes) == 2
+        assert len(val_ds.episodes) == 1
+        assert len(train_ds) == 2 * 4  # 4 valid actions per synthetic episode
+        assert len(val_ds) == 1 * 4
+
+
+def test_raises_when_neither_data_dir_nor_files_given():
+    try:
+        EpisodeChunkDataset()
+        raise AssertionError("expected ValueError when neither data_dir nor files is given")
+    except ValueError:
+        pass  # expected
 
 
 def _run_all_tests():

@@ -110,6 +110,35 @@ Both are implemented and both have precomputed stats in `stats/`, so we can
 compare empirically once there's a model to compare them with, rather than
 guessing up front.
 
+## Training
+
+`train.py` — full training run, episode-level train/val split, saves the
+best checkpoint by validation loss:
+
+```
+python train.py                              # defaults: 50 epochs, batch 64, lr 1e-3
+python train.py --epochs 100 --batch-size 128 --lr 3e-4
+python train.py --action-mode finite_diff_vel  # action_dim is read off the data, not hardcoded
+python train.py --resume checkpoints/last_model.pt --epochs 100  # continue training
+```
+
+Saves three files to `checkpoints/` (gitignored -- these are local training
+artifacts, not committed):
+- `best_model.pt` -- lowest validation loss seen so far (full state:
+  weights, optimizer, config, epoch, history)
+- `last_model.pt` -- overwritten every epoch, for resuming
+- `training_history.json` -- per-epoch train/val loss + the exact
+  train/val episode file split + run config, for later plotting/audit
+
+A real run (50 epochs, defaults, CPU) got val loss from 0.00097 -> 0.00029,
+best at epoch 47. `--patience N` stops early after N epochs without
+validation improvement.
+
+Note: `--action-mode finite_diff_vel` currently trains a working model, but
+its action space is NOT unit-consistent with `next_state` (world-frame
+base velocity instead of ego-frame, 9 dims instead of 10 -- see the
+open-question section above) -- flagged, not yet fixed.
+
 ## Testing
 
 Two layers of checks:
