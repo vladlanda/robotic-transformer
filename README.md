@@ -183,6 +183,42 @@ python scripts/compute_stats.py data finite_diff_vel
 python scripts/smoke_test_tokenizer.py # Dataset -> batch -> EntityTokenizer, end to end
 ```
 
+## Inference
+
+`sim_inference.py` — single-step inference for a live simulator loop:
+
+```python
+from sim_inference import load_model, predict_action
+
+model, cfg = load_model("checkpoints/best_model.pt")
+
+row = [...]  # one row of raw values, in schema.ALL_COLUMNS order --
+             # exactly what one row of the training CSVs looks like
+action = predict_action(row, model, cfg)
+# {'base_delta_x': ..., 'base_delta_y': ..., 'base_delta_yaw': ...,
+#  'arm_joint1': ..., 'arm_joint2': ..., 'arm_joint3': ..., 'arm_joint4': ...,
+#  'gripper_gear': ..., 'gripper_rotation_rad': ...}
+```
+
+Reuses `entities.py`'s exact feature functions (via a single-row `Episode`
+reconstruction) rather than re-implementing the preprocessing, so it's
+guaranteed consistent with what the model was actually trained on. Wrist
+roll is decoded from `(sin, cos)` back to a single radian value in the
+output dict, per `atan2(sin, cos)`.
+
+Only supports `action_mode="next_state"` checkpoints (rejects
+`finite_diff_vel` explicitly, since its action layout isn't unit-consistent
+with this one -- see the open-question section above). The model predicts
+a full `chunk_size`-step action chunk per call; `predict_action(...,
+chunk_index=0)` (the default) decodes the very next action, which is what
+a live control loop normally wants -- predict a chunk, execute step 0,
+re-query next tick with fresh sensor data, rather than executing a whole
+stale chunk blind.
+
+`python -m sim_inference` runs its own unit tests (synthetic data, no
+checkpoint required) and, if `checkpoints/best_model.pt` exists locally,
+also runs one real demo prediction against actual data.
+
 ## Not yet done
 
 - The transformer body itself (attention over the entity tokens) and the
