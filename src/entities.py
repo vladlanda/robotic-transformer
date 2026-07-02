@@ -107,3 +107,97 @@ def validate_feature_dims(ep: Episode) -> None:
     obs = obstacle_features(ep, 0)
     if obs.shape[1] != FEATURE_DIM["obstacle"]:
         raise AssertionError(f"obstacle_features() last dim {obs.shape[1]} != FEATURE_DIM['obstacle']={FEATURE_DIM['obstacle']}")
+
+
+# --------------------------------------------------------------------------
+# Unit tests. Run directly with:  python -m src.entities
+# Reuses the synthetic (hand-computable) episode from episode.py's own
+# tests rather than duplicating a second synthetic dataset.
+# --------------------------------------------------------------------------
+
+def _synthetic_episode():
+    import tempfile
+    from .episode import load_episode, _make_synthetic_csv
+    tmp = tempfile.mkdtemp()
+    return load_episode(_make_synthetic_csv(tmp), action_mode="next_state")
+
+
+def test_feature_dims_match_declared_dims():
+    ep = _synthetic_episode()
+    assert proprio_features(ep, 0).shape == (FEATURE_DIM["proprio"],)
+    assert object_features(ep, 0).shape == (FEATURE_DIM["object"],)
+    assert goal_features(ep, 0).shape == (FEATURE_DIM["goal"],)
+    assert obstacle_features(ep, 0).shape == (0, FEATURE_DIM["obstacle"])
+
+
+def test_object_features_values_match_known_synthetic_episode():
+    # From episode.py's synthetic data: at step 0, cube_pos_ego=(5,2),
+    # cube_z=0.42, cube_linvel_ego=(-10,0) -- see test_load_episode_ego_frame_values
+    ep = _synthetic_episode()
+    feat = object_features(ep, 0)
+    assert np.allclose(feat, [5.0, 2.0, 0.42, -10.0, 0.0], atol=1e-5), f"got {feat}"
+
+
+def test_goal_features_values_match_known_synthetic_episode():
+    ep = _synthetic_episode()
+    feat = goal_features(ep, 0)
+    assert np.allclose(feat, [8.0, 3.0, 0.42], atol=1e-5), f"got {feat}"
+
+
+def test_obstacle_features_always_empty_today():
+    ep = _synthetic_episode()
+    for i in range(len(ep.t)):
+        obs = obstacle_features(ep, i)
+        assert obs.shape == (0, FEATURE_DIM["obstacle"]), (
+            "no obstacle data exists in the current dataset -- this should "
+            "always be an empty (0-row) array until real obstacle columns exist"
+        )
+
+
+def test_type_ids_are_unique_and_zero_indexed():
+    ids = sorted(TYPE_ID.values())
+    assert ids == list(range(len(TYPE_ID))), f"TYPE_ID values should be a dense 0..N-1 range, got {ids}"
+
+
+def test_validate_feature_dims_passes_on_correct_episode():
+    ep = _synthetic_episode()
+    validate_feature_dims(ep)  # should not raise
+
+
+def test_validate_feature_dims_catches_a_deliberately_broken_dim():
+    # Regression test for the exact class of bug this function exists to
+    # catch (it happened once while writing entities.py -- see git history).
+    ep = _synthetic_episode()
+    original = FEATURE_DIM["object"]
+    FEATURE_DIM["object"] = original + 1  # deliberately wrong
+    try:
+        try:
+            validate_feature_dims(ep)
+            raise AssertionError("expected validate_feature_dims to raise on a mismatched dim, it didn't")
+        except AssertionError as e:
+            if "expected validate_feature_dims" in str(e):
+                raise
+            pass  # this is the expected failure from validate_feature_dims itself
+    finally:
+        FEATURE_DIM["object"] = original  # always restore global state
+
+
+def _run_all_tests():
+    import sys
+    tests = [obj for name, obj in list(globals().items()) if name.startswith("test_") and callable(obj)]
+    passed, failed = 0, []
+    for t in tests:
+        try:
+            t()
+            print(f"  PASS  {t.__name__}")
+            passed += 1
+        except AssertionError as e:
+            print(f"  FAIL  {t.__name__}: {e}")
+            failed.append(t.__name__)
+    print(f"\n{passed}/{len(tests)} tests passed" + (f", FAILED: {failed}" if failed else ""))
+    if failed:
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    _run_all_tests()

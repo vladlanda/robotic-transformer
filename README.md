@@ -110,13 +110,48 @@ Both are implemented and both have precomputed stats in `stats/`, so we can
 compare empirically once there's a model to compare them with, rather than
 guessing up front.
 
-## Running the checks
+## Testing
+
+Two layers of checks:
+
+**1. Per-module unit tests.** Every module under `src/` is independently
+runnable and self-testing -- each file ends with `test_*` functions (plain
+assertions, no pytest dependency) and an `if __name__ == "__main__"` block
+that runs them and prints PASS/FAIL:
+
+```
+python -m src.schema
+python -m src.transforms
+python -m src.episode
+python -m src.entities
+python -m src.tokenizer
+python -m src.dataset
+python -m src.model
+```
+
+Or all of them in one pass: `python scripts/run_all_unit_tests.py`
+(49 assertions total, as of this writing).
+
+These run against small synthetic/hand-computable data (e.g. `episode.py`
+builds a synthetic CSV with a base moving in a straight line at constant
+velocity, so the expected ego-frame values can be worked out by hand and
+checked exactly) -- not the real dataset. Notably: `transforms.py` includes
+a regression test for the exact "`y_ego=0` doesn't mean world-y matches"
+scenario a conversation surfaced; `entities.py` tests that
+`validate_feature_dims` actually catches a deliberately broken dimension
+(this exact bug happened once while writing the file); `model.py` tests
+that scrambling only *masked* obstacle content leaves the model's output
+unchanged -- proof the attention mask protects the output, not just that
+the tokenizer accepts padded input.
+
+**2. Integration checks against the real dataset:**
 
 ```
 pip install -r requirements.txt
 python scripts/inspect_dataset.py      # loads all 298 episodes, checks for NaN/Inf
 python scripts/compute_stats.py        # writes stats/normalization_next_state.json
 python scripts/compute_stats.py data finite_diff_vel
+python scripts/smoke_test_tokenizer.py # Dataset -> batch -> EntityTokenizer, end to end
 ```
 
 ## Not yet done

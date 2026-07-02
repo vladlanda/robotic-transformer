@@ -132,3 +132,134 @@ class EpisodeChunkDataset(Dataset):
             "episode_path": ep.path,
             "step": start,
         }
+
+
+# --------------------------------------------------------------------------
+# Unit tests. Run directly with:  python -m src.dataset
+# Builds a small directory of SYNTHETIC episode csvs (reusing episode.py's
+# hand-computable synthetic data) rather than depending on the real data/
+# directory, so this test is self-contained.
+# --------------------------------------------------------------------------
+
+def _make_synthetic_dataset_dir(tmp_dir: str, n_episodes: int = 2) -> str:
+    import shutil
+    from .episode import _make_synthetic_csv
+    base_file = _make_synthetic_csv(tmp_dir)  # creates synthetic_episode.csv, 5 rows -> 4 actions
+    for k in range(n_episodes):
+        shutil.copy(base_file, os.path.join(tmp_dir, f"env_000_episode_{k:04d}.csv"))
+    os.remove(base_file)
+    return tmp_dir
+
+
+def test_dataset_length_matches_actions_per_episode():
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = _make_synthetic_dataset_dir(tmp, n_episodes=3)
+        ds = EpisodeChunkDataset(data_dir, chunk_size=12, history=0, max_obstacles=8)
+        # each synthetic episode has 5 rows -> 4 valid (state, action) pairs
+        assert len(ds) == 3 * 4, f"expected 12 samples, got {len(ds)}"
+
+
+def test_sample_shapes():
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = _make_synthetic_dataset_dir(tmp, n_episodes=1)
+        history, chunk_size, max_obs = 2, 12, 8
+        ds = EpisodeChunkDataset(data_dir, chunk_size=chunk_size, history=history, max_obstacles=max_obs)
+        sample = ds[0]
+        assert sample["proprio"].shape == (history + 1, entities.FEATURE_DIM["proprio"])
+        assert sample["object"].shape == (history + 1, entities.FEATURE_DIM["object"])
+        assert sample["goal"].shape == (history + 1, entities.FEATURE_DIM["goal"])
+        assert sample["obstacles"].shape == (history + 1, max_obs, entities.FEATURE_DIM["obstacle"])
+        assert sample["obstacle_mask"].shape == (history + 1, max_obs)
+        action_dim = 2 + 1 + 4 + 1 + 2  # base_vxy + yaw_rate + arm_joint + gripper_gear + gripper_rot(sincos)
+        assert sample["action_chunk"].shape == (chunk_size, action_dim)
+        assert sample["action_mask"].shape == (chunk_size,)
+
+
+def test_action_padding_and_mask_at_episode_end():
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = _make_synthetic_dataset_dir(tmp, n_episodes=1)
+        chunk_size = 12
+        ds = EpisodeChunkDataset(data_dir, chunk_size=chunk_size, history=0, max_obstacles=8)
+        # the synthetic episode has exactly 4 valid actions (indices 0..3);
+        # starting at the LAST valid index (3) leaves only 1 real action,
+        # the remaining 11 chunk slots must be padded+masked
+        last_start_idx = len(ds) - 1  # single episode, so this is start=3
+        sample = ds[last_start_idx]
+        mask = sample["action_mask"]
+        assert mask.sum().item() == 1.0, f"expected exactly 1 unmasked action, got {mask.sum().item()}"
+        assert mask[0].item() == 1.0
+        assert torch.all(mask[1:] == 0.0)
+        # padded (masked-out) entries should repeat the last real action
+        chunk = sample["action_chunk"]
+        assert torch.allclose(chunk[1], chunk[0]), "padding should repeat the last real action, not zero-fill"
+        assert torch.allclose(chunk[-1], chunk[0])
+
+
+def test_history_padding_repeats_earliest_valid_step():
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = _make_synthetic_dataset_dir(tmp, n_episodes=1)
+        history = 3
+        ds = EpisodeChunkDataset(data_dir, chunk_size=12, history=history, max_obstacles=8)
+        sample = ds[0]  # start=0 -> not enough history, must repeat-pad
+        proprio_hist = sample["proprio"]  # (history+1, dim)
+        # all rows before the "real" (last) one should equal it, since with
+        # start=0 and history=3 there's no real history to draw on
+        for i in range(history):
+            assert torch.allclose(proprio_hist[i], proprio_hist[-1]), (
+                f"history row {i} should equal the real step-0 features (repeat padding)"
+            )
+
+
+def test_obstacles_always_masked_out_with_current_data():
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = _make_synthetic_dataset_dir(tmp, n_episodes=1)
+        ds = EpisodeChunkDataset(data_dir, chunk_size=12, history=0, max_obstacles=8)
+        sample = ds[0]
+        assert torch.all(sample["obstacle_mask"] == 0.0)
+        assert torch.all(sample["obstacles"] == 0.0)
+
+
+def test_max_obstacles_zero_still_works():
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = _make_synthetic_dataset_dir(tmp, n_episodes=1)
+        ds = EpisodeChunkDataset(data_dir, chunk_size=12, history=0, max_obstacles=0)
+        sample = ds[0]
+        assert sample["obstacles"].shape == (1, 0, entities.FEATURE_DIM["obstacle"])
+        assert sample["obstacle_mask"].shape == (1, 0)
+
+
+def test_raises_on_empty_directory():
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            EpisodeChunkDataset(tmp)
+            raise AssertionError("expected FileNotFoundError for an empty data directory, none was raised")
+        except FileNotFoundError:
+            pass  # expected
+
+
+def _run_all_tests():
+    import sys
+    tests = [obj for name, obj in list(globals().items()) if name.startswith("test_") and callable(obj)]
+    passed, failed = 0, []
+    for t in tests:
+        try:
+            t()
+            print(f"  PASS  {t.__name__}")
+            passed += 1
+        except AssertionError as e:
+            print(f"  FAIL  {t.__name__}: {e}")
+            failed.append(t.__name__)
+    print(f"\n{passed}/{len(tests)} tests passed" + (f", FAILED: {failed}" if failed else ""))
+    if failed:
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    _run_all_tests()

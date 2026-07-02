@@ -84,3 +84,67 @@ CONTROLLABLE_STATE = {
     "gripper_gear": GRIPPER_GEAR_POS,
     "gripper_rot": GRIPPER_ROT_POS,
 }
+
+
+# --------------------------------------------------------------------------
+# Unit tests. Run directly with:  python -m src.schema
+# These aren't testing "functions" (schema.py is just data) -- they're
+# testing that the data is internally consistent, which is exactly the
+# class of bug (miscounted/duplicated/missing columns) that's easy to
+# introduce by hand when a schema like this grows.
+# --------------------------------------------------------------------------
+
+def test_all_columns_no_duplicates():
+    assert len(ALL_COLUMNS) == len(set(ALL_COLUMNS)), "duplicate column name in ALL_COLUMNS"
+
+
+def test_all_columns_count_matches_known_dataset_width():
+    # The real dataset (verified in scripts/inspect_dataset.py) has 48
+    # columns. If this ever drifts, either the schema or the real data
+    # changed and it's worth knowing which.
+    assert len(ALL_COLUMNS) == 48, f"expected 48 columns, schema declares {len(ALL_COLUMNS)}"
+
+
+def test_group_lengths_match_expected_dimensionality():
+    assert len(BASE_POS) == 3 and len(BASE_QUAT) == 4 and len(BASE_LINVEL) == 3 and len(BASE_ANGVEL) == 3
+    assert len(CUBE_POS) == 3 and len(CUBE_QUAT) == 4 and len(CUBE_LINVEL) == 3 and len(CUBE_ANGVEL) == 3
+    assert len(TARGET_POS) == 3
+    assert len(ENDPOINT_POS) == 3 and len(ENDPOINT_LINVEL) == 3
+    assert len(GRIPPER_GEAR_POS) == 1 and len(GRIPPER_GEAR_VEL) == 1
+    assert len(GRIPPER_ROT_POS) == 1 and len(GRIPPER_ROT_VEL) == 1
+    assert len(JOINT_POS) == 4 and len(JOINT_VEL) == 4
+
+
+def test_degenerate_columns_are_a_subset_of_base_columns():
+    base_columns = set(BASE_POS + BASE_QUAT + BASE_ANGVEL)
+    assert set(DEGENERATE_COLUMNS).issubset(base_columns), (
+        "DEGENERATE_COLUMNS should only reference base pose/orientation/angvel columns"
+    )
+
+
+def test_controllable_state_references_only_real_columns():
+    all_cols = set(ALL_COLUMNS)
+    for name, cols in CONTROLLABLE_STATE.items():
+        for c in cols:
+            assert c in all_cols, f"CONTROLLABLE_STATE[{name!r}] references unknown column {c!r}"
+
+
+def _run_all_tests():
+    import sys
+    tests = [obj for name, obj in list(globals().items()) if name.startswith("test_") and callable(obj)]
+    passed, failed = 0, []
+    for t in tests:
+        try:
+            t()
+            print(f"  PASS  {t.__name__}")
+            passed += 1
+        except AssertionError as e:
+            print(f"  FAIL  {t.__name__}: {e}")
+            failed.append(t.__name__)
+    print(f"\n{passed}/{len(tests)} tests passed" + (f", FAILED: {failed}" if failed else ""))
+    if failed:
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    _run_all_tests()
