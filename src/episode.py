@@ -42,7 +42,7 @@ import numpy as np
 import pandas as pd
 
 from . import schema
-from .transforms import yaw_from_quat_wz, world_to_ego, world_vel_to_ego, sin_cos_encode
+from .transforms import yaw_from_quat_wz, world_to_ego, world_vel_to_ego, rotate_to_ego, sin_cos_encode
 
 ActionMode = Literal["next_state", "finite_diff_vel"]
 
@@ -56,6 +56,7 @@ class Episode:
     base_pos_world: np.ndarray  # (T, 2) xy only, z confirmed constant
     base_yaw: np.ndarray  # (T,)
     base_linvel_world: np.ndarray  # (T, 2)
+    base_linvel_ego: np.ndarray  # (T, 2) -- rotated only, no translation (it's a velocity, not a point)
     base_yaw_rate: np.ndarray  # (T,)
     cube_pos_world: np.ndarray  # (T, 3)
     endpoint_pos_world: np.ndarray  # (T, 3)
@@ -101,6 +102,7 @@ def load_episode(path: str, action_mode: ActionMode = "next_state") -> Episode:
     base_yaw = yaw_from_quat_wz(df["robot_box_quat_w"].to_numpy(), df["robot_box_quat_z"].to_numpy())
     base_linvel_world = df[["robot_box_linvel_x", "robot_box_linvel_y"]].to_numpy()
     base_yaw_rate = df["robot_box_angvel_z"].to_numpy()
+    base_linvel_ego = rotate_to_ego(base_linvel_world, base_yaw)
 
     cube_pos_world = df[schema.CUBE_POS].to_numpy()
     cube_linvel_world = df[schema.CUBE_LINVEL].to_numpy()[:, :2]
@@ -132,6 +134,7 @@ def load_episode(path: str, action_mode: ActionMode = "next_state") -> Episode:
         base_pos_world=base_pos_world,
         base_yaw=base_yaw,
         base_linvel_world=base_linvel_world,
+        base_linvel_ego=base_linvel_ego,
         base_yaw_rate=base_yaw_rate,
         cube_pos_world=cube_pos_world,
         endpoint_pos_world=endpoint_pos_world,

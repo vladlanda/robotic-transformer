@@ -28,18 +28,42 @@ reference screenshot).
 ## Repo layout
 
 ```
-robotic_transformer/
-  data/
-    schema.py      column groupings + notes on what's actually in the logs
-    transforms.py  SE(2) ego-frame transform, sin/cos angle encoding
-    episode.py     loads one CSV -> Episode (raw + ego-frame + pseudo-actions)
-    dataset.py     PyTorch Dataset: chunked (obs, action_chunk) windows
+src/
+  schema.py      column groupings + notes on what's actually in the logs
+  transforms.py  SE(2) ego-frame transform (points + velocities), sin/cos encoding
+  episode.py     loads one CSV -> Episode (raw + ego-frame + pseudo-actions)
+  entities.py    per-entity feature extraction (proprio/object/goal/obstacle)
+                 + fixed TYPE_ID tags -- see "Entity tokens" below
+  tokenizer.py   EntityTokenizer (nn.Module): raw features -> tagged tokens
+  dataset.py     PyTorch Dataset: chunked (entity tokens, action_chunk) windows
 scripts/
-  inspect_dataset.py   sanity-checks the pipeline against every episode
-  compute_stats.py     per-channel normalization stats -> stats/*.json
+  inspect_dataset.py       sanity-checks the pipeline against every episode
+  compute_stats.py         per-channel normalization stats -> stats/*.json
+  smoke_test_tokenizer.py  end-to-end: Dataset -> batch -> EntityTokenizer
 stats/
   normalization_*.json precomputed stats, one file per action_mode
 ```
+
+## Entity tokens (tag-embedding scheme)
+
+Every "thing in the scene" becomes its own token:
+`token = Linear_kind(raw_features) + type_embedding[TYPE_ID[kind]]`.
+`TYPE_ID` (in `entities.py`) is fixed, hardcoded bookkeeping -- not learned.
+What IS learned is the content of each type's tag vector, and the linear
+projection weights (in `tokenizer.py`).
+
+Four kinds today: `proprio` (1 token: arm + gripper + base velocity +
+gripper-tip pose, always present), `object` (1 token: the cube), `goal` (1
+token: the target position), `obstacle` (0..N tokens, padded to
+`max_obstacles` and masked).
+
+**No obstacle data exists in the current dataset.** `entities.obstacle_features()`
+always returns zero rows today, so obstacle tokens are always fully masked
+(the model sees a "no obstacles present" signal, not fake obstacles at the
+origin). This is intentional and already tested end-to-end in
+`scripts/smoke_test_tokenizer.py` — adding real obstacles later should only
+require changing `obstacle_features()` to read real columns; the Dataset,
+tokenizer, and any model built on top of it should not need to change.
 
 ## Key design decisions made so far
 
@@ -87,9 +111,13 @@ python scripts/compute_stats.py data finite_diff_vel
 
 ## Not yet done
 
-- Model architecture (transformer encoder over the flattened per-step
-  features -> action-chunk head). `dataset.py` produces plain flat vectors;
-  the tokenization scheme for the transformer itself isn't decided yet.
+- The transformer body itself (attention over the entity tokens) and the
+  action-chunk output head. `tokenizer.py` produces tagged tokens; nothing
+  yet consumes the full token *set* with self-attention -- that's the next
+  piece.
+- Real obstacle data. The `obstacle` token slot is reserved and tested with
+  an empty/masked set, but nothing has been evaluated with actual obstacles
+  present.
 - Endpoint orientation is not logged at all — fine if every grasp uses a
   fixed approach orientation (looks true from the reference episodes), but
   worth confirming before assuming it away entirely.

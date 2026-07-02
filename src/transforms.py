@@ -89,6 +89,23 @@ def world_vel_to_ego(
     return np.stack([x_ego, y_ego], axis=-1)
 
 
+def rotate_to_ego(vec_world: np.ndarray, base_yaw: np.ndarray) -> np.ndarray:
+    """
+    Rotate a world-frame 2D vector (e.g. a velocity) into the base's ego
+    frame -- rotation only, no translation. Use this for vectors that don't
+    have a "position" (nothing to subtract the base's position from),
+    unlike world_to_ego which is for points.
+
+    vec_world: (T, 2)
+    base_yaw:  (T,)
+    returns:   (T, 2)
+    """
+    cos_t, sin_t = np.cos(base_yaw), np.sin(base_yaw)
+    x_ego = cos_t * vec_world[..., 0] + sin_t * vec_world[..., 1]
+    y_ego = -sin_t * vec_world[..., 0] + cos_t * vec_world[..., 1]
+    return np.stack([x_ego, y_ego], axis=-1)
+
+
 def sin_cos_encode(angle: np.ndarray) -> np.ndarray:
     """
     Encode an angle (radians, any range -- including unbounded/continuous
