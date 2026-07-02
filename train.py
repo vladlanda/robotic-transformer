@@ -90,6 +90,56 @@ def pick_device(requested: str = None) -> torch.device:
     return torch.device("cpu")
 
 
+def report_device_availability(chosen: torch.device, requested: str = None):
+    cuda_ok = torch.cuda.is_available()
+    mps_ok = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+    print("GPU check:")
+    print(f"  CUDA available: {cuda_ok}" + (f"  ({torch.cuda.get_device_name(0)})" if cuda_ok else ""))
+    print(f"  MPS  available: {mps_ok}" + ("  (Apple Silicon GPU)" if mps_ok else ""))
+    print(f"  -> using device: {chosen}" + ("  (forced via --device)" if requested else "  (auto-detected)"))
+    if chosen.type == "cpu" and (cuda_ok or mps_ok):
+        print("  note: a GPU is available but --device cpu was requested/detected as unused.")
+    if chosen.type == "cpu":
+        print("  training on CPU will be considerably slower than GPU/MPS for this model.")
+
+
+def device_smoke_test(model, cfg, device: torch.device):
+    """
+    Runs one tiny forward+backward pass with synthetic data on `device`
+    BEFORE the real training loop starts. Purpose: device-placement bugs
+    (e.g. a tensor built without a device= argument inside a submodule,
+    which silently stays on CPU no matter where the model was moved) are
+    invisible on CPU-only setups but crash on MPS/CUDA -- usually deep
+    inside the first real training batch, with a cryptic low-level error
+    ("Placeholder storage has not been allocated on MPS device!" is a real
+    example that came up in practice). Failing fast here, with a clear
+    message, beats discovering that minutes into a real run.
+    """
+    from src import entities
+    try:
+        b = 2
+        proprio = torch.randn(b, entities.FEATURE_DIM["proprio"], device=device)
+        obj = torch.randn(b, entities.FEATURE_DIM["object"], device=device)
+        goal = torch.randn(b, entities.FEATURE_DIM["goal"], device=device)
+        obstacles = torch.randn(b, 2, entities.FEATURE_DIM["obstacle"], device=device)
+        obstacle_mask = torch.zeros(b, obstacles.shape[1], device=device)
+        target = torch.randn(b, cfg.chunk_size, cfg.action_dim, device=device)
+        mask = torch.ones(b, cfg.chunk_size, device=device)
+
+        pred = model(proprio, obj, goal, obstacles, obstacle_mask)
+        loss = masked_mse_loss(pred, target, mask)
+        loss.backward()
+        model.zero_grad(set_to_none=True)
+    except RuntimeError as e:
+        raise RuntimeError(
+            f"Device smoke test failed on {device} before any real training happened. "
+            f"This is almost always a tensor created somewhere without an explicit "
+            f"device= argument, left on CPU while the model itself is on {device}. "
+            f"Original error: {e}"
+        ) from e
+    print(f"  device smoke test passed on {device}.")
+
+
 def split_episode_files(data_dir: str, val_fraction: float, seed: int):
     files = sorted(glob.glob(os.path.join(data_dir, "*.csv")))
     if not files:
@@ -133,7 +183,7 @@ def main():
     device = pick_device(args.device)
     os.makedirs(args.checkpoint_dir, exist_ok=True)
 
-    print(f"device: {device}")
+    report_device_availability(device, args.device)
     train_files, val_files = split_episode_files(args.data_dir, args.val_fraction, args.seed)
     print(f"episodes: {len(train_files)} train / {len(val_files)} val "
           f"(val_fraction={args.val_fraction}, seed={args.seed})")
@@ -162,6 +212,7 @@ def main():
     model = ActionChunkTransformer(cfg).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"model params: {n_params:,}")
+    device_smoke_test(model, cfg, device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 

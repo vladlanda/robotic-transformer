@@ -40,7 +40,7 @@ class EntityTokenizer(nn.Module):
         self.type_embedding = nn.Embedding(entities.NUM_TYPES, d_model)
 
     def _tag(self, kind: str) -> torch.Tensor:
-        type_id = torch.tensor(entities.TYPE_ID[kind])
+        type_id = torch.tensor(entities.TYPE_ID[kind], device=self.type_embedding.weight.device)
         return self.type_embedding(type_id)  # (d_model,)
 
     def forward(
@@ -162,6 +162,24 @@ def test_type_embedding_rows_differ_at_init():
     for i in range(rows.shape[0]):
         for j in range(i + 1, rows.shape[0]):
             assert not torch.allclose(rows[i], rows[j]), f"type_embedding rows {i} and {j} are identical"
+
+
+def test_tag_index_tensor_matches_embedding_table_device():
+    # Regression test: _tag() used to build its index tensor with
+    # torch.tensor(...) and no device= argument, which silently defaulted
+    # to CPU. That's invisible when everything is on CPU (as in this
+    # sandbox) but breaks the moment the model is moved to MPS/CUDA, since
+    # the embedding TABLE moves but this ad-hoc index tensor didn't. This
+    # can't fully exercise a real GPU here, but it locks in the fix: the
+    # index tensor must always be built on whatever device the embedding
+    # table actually lives on, not implicitly on CPU.
+    tok = EntityTokenizer(d_model=16)
+    for kind in entities.TYPE_ID:
+        tag = tok._tag(kind)
+        assert tag.device == tok.type_embedding.weight.device, (
+            f"_tag({kind!r}) returned a tensor on {tag.device}, but the embedding "
+            f"table lives on {tok.type_embedding.weight.device}"
+        )
 
 
 def test_gradients_flow_to_all_parameters():
