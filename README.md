@@ -185,39 +185,35 @@ python scripts/smoke_test_tokenizer.py # Dataset -> batch -> EntityTokenizer, en
 
 ## Inference
 
-`sim_inference.py` — single-step inference for a live simulator loop:
+`sim_inference.py` — two functions, `load_model()` and `predict_action()`,
+plus a plain hardcoded example in `if __name__ == "__main__"`:
 
 ```python
 from sim_inference import load_model, predict_action
 
 model, cfg = load_model("checkpoints/best_model.pt")
-
-row = [...]  # one row of raw values, in schema.ALL_COLUMNS order --
-             # exactly what one row of the training CSVs looks like
+row = [...]  # 48 raw values, in schema.ALL_COLUMNS order -- what one row
+             # of the training csvs looks like, no csv file needed
 action = predict_action(row, model, cfg)
 # {'base_delta_x': ..., 'base_delta_y': ..., 'base_delta_yaw': ...,
 #  'arm_joint1': ..., 'arm_joint2': ..., 'arm_joint3': ..., 'arm_joint4': ...,
 #  'gripper_gear': ..., 'gripper_rotation_rad': ...}
 ```
 
-Reuses `entities.py`'s exact feature functions (via a single-row `Episode`
-reconstruction) rather than re-implementing the preprocessing, so it's
-guaranteed consistent with what the model was actually trained on. Wrist
-roll is decoded from `(sin, cos)` back to a single radian value in the
-output dict, per `atan2(sin, cos)`.
+Uses the same ego-frame transform functions (`transforms.py`) that training
+uses, applied directly to the row's raw values -- no obstacles passed in
+(empty set; proven equivalent to an all-masked block by
+`test_padded_obstacle_content_does_not_affect_output` in `model.py`), no
+csv reading, no test suite in this file. Wrist roll is decoded from
+`(sin, cos)` back to a single radian value via `atan2(sin, cos)`. Returns
+the first step of the model's predicted action chunk (the next action to
+take -- predict, execute step 0, re-query next tick with fresh sensor data).
 
-Only supports `action_mode="next_state"` checkpoints (rejects
-`finite_diff_vel` explicitly, since its action layout isn't unit-consistent
-with this one -- see the open-question section above). The model predicts
-a full `chunk_size`-step action chunk per call; `predict_action(...,
-chunk_index=0)` (the default) decodes the very next action, which is what
-a live control loop normally wants -- predict a chunk, execute step 0,
-re-query next tick with fresh sensor data, rather than executing a whole
-stale chunk blind.
-
-`python -m sim_inference` runs its own unit tests (synthetic data, no
-checkpoint required) and, if `checkpoints/best_model.pt` exists locally,
-also runs one real demo prediction against actual data.
+Only tested against `action_mode="next_state"` checkpoints -- the layout
+`predict_action()` assumes (base deltas + absolute joint/gripper targets +
+sin/cos wrist) doesn't match `finite_diff_vel` checkpoints (see the
+open-question section above); no automatic check for this in the current
+version, so pass the right checkpoint.
 
 ## Not yet done
 
